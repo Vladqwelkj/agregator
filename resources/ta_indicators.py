@@ -1,8 +1,7 @@
 import numpy as np
 import pandas as pd
 
-
-def calc_RSI(source_prices, n):
+def calc_last_RSI(source_prices, n):
     deltas = np.diff(source_prices)
     seed = deltas[:n+1]
     up = seed[seed>=0].sum()/n
@@ -22,7 +21,8 @@ def calc_RSI(source_prices, n):
         down = (down*(n-1) + downval)/n
         rs = up/down
         rsi[i] = 100. - 100./(1.+rs)
-    return rsi
+    return rsi[-1]
+
 
 
 def calc_bbands(source_prices, std, sma_period):
