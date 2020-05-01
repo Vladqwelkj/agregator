@@ -6,8 +6,8 @@ import datetime
 import requests
 import json
 
-from .resources.utils import in_new_thread
-from .resources.entities.candle_callback import CandleCallback
+from ..utils import in_new_thread
+from resources.entities.candle_callback import CandleCallback
 
 
 
@@ -35,7 +35,7 @@ class CandlesReceiver:
 
 
     @in_new_thread
-    def _send_candle_by_symbol(self, symbol: str, interval: str):
+    def _send_last_candle_by_symbol(self, symbol: str, interval: str):
         r = requests.get( # такая реализация получения свечки работает быстрее, чем методы из библиотек с api binance
             'https://api.binance.com/api/v1/klines?symbol={}&interval={}&limit=2'.format(symbol, interval)
             ).text
@@ -58,10 +58,10 @@ class CandlesReceiver:
             print(time_now)
             if time_now.minute==00: # if new hour
                 for symbol in self.symbols:
-                    self._send_candle_by_symbol(symbol, '1h')
+                    self._send_last_candle_by_symbol(symbol, '1h')
                 if time_now.hour==00: # if new day
                     for symbol in self.symbols:
-                        self._send_candle_by_symbol(symbol, '1d')
+                        self._send_last_candle_by_symbol(symbol, '1d')
                 time.sleep(3000) # timeout. about 1 hour
             time.sleep(1)
 
