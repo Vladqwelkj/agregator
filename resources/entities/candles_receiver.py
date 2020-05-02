@@ -6,14 +6,19 @@ import datetime
 import requests
 import json
 
-from ..utils import in_new_thread
-from resources.entities.candle_callback import CandleCallback
-
+from ..utils import in_new_thread, write_log
+from resources.entities.candle_callback import Candle
+from resources.entities.proxy_distributor import ProxyDistributor
 
 
 class CandlesReceiver:
-    def __init__(self, client: Client, symbols: list, data_agregator_callback):
+    def __init__(self,
+         client: Client, 
+         proxy_distributor: ProxyDistributor,
+         symbols: list,
+         data_agregator_callback):
         self.bm = BinanceSocketManager(client)
+        self.proxy_distributor = proxy_distributor
         self.data_agregator_callback = data_agregator_callback
         self.symbols = symbols
 
@@ -26,21 +31,28 @@ class CandlesReceiver:
     def _get_exchange_time(self):
         while True: # exchange_time не сразу определяется в _callback_when_15m_candle_received 
             try: # и нужно ждать, пока она впервые появится
-                time = int(self.exchange_time)
+                t = int(self.exchange_time)
                 break
-            except:
+            except AttributeError:
                 time.sleep(1)
-                continue
-        return datetime.datetime.fromtimestamp(time/1000)
+        return datetime.datetime.fromtimestamp(t/1000)
 
 
     @in_new_thread
     def _send_last_candle_by_symbol(self, symbol: str, interval: str):
-        r = requests.get( # такая реализация получения свечки работает быстрее, чем методы из библиотек с api binance
-            'https://api.binance.com/api/v1/klines?symbol={}&interval={}&limit=2'.format(symbol, interval)
-            ).text
+        '''Отправляет в data_agregator последнюю свечку'''
+        max_attempts = 5
+        for _ in range(max_attempts): # пять попыток. Чтобы была возможность сменить прокси
+            try:
+                r = requests.get( # такая реализация получения свечки работает быстрее, чем методы из библиотек с api binance
+                    'https://api.binance.com/api/v1/klines?symbol={}&interval={}&limit=2'.format(symbol, interval),
+                    proxies=proxy_distributor.get_proxy()
+                    ).text
+                break
+            except:
+                continue
         candle = json.loads(r)[0]
-        self.data_agregator_callback(callback_data=CandleCallback(
+        self.data_agregator_callback(callback_data=Candle(
             symbol=symbol,
             interval=interval,
             O=candle[1],
@@ -68,7 +80,7 @@ class CandlesReceiver:
 
     def _start_15m_ws_candle_receiver(self):
         streams_names = list()
-        for symbol in symbols:
+        for symbol in self.symbols:
             streams_names.append(symbol.lower()+'@kline_15m')
         self.bm.start_multiplex_socket(streams_names, self._callback_when_15m_candle_received)
         self.bm.start()
@@ -80,16 +92,15 @@ class CandlesReceiver:
         self.exchange_time = data['data']['e']
         candle = data['data']['k']
         if candle['x']: # Если свеча закрылась
-            for callback in self._callbacks:
-                self.data_agregator_callback(CandleCallback(
-                    symbol=candle['s'],
-                    interval='15m',
-                    O=candle['o'],
-                    H=candle['h'],
-                    L=candle['l'],
-                    C=candle['c'],
-                    volume=candle['v'],
-                    ))
+            self.data_agregator_callback(callback_data=Candle(
+                symbol=candle['s'],
+                interval='15m',
+                O=candle['o'],
+                H=candle['h'],
+                L=candle['l'],
+                C=candle['c'],
+                volume=candle['v'],
+                ))
 
                 
 

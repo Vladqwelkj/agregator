@@ -1,8 +1,8 @@
-from .candle_callback import CandleCallback
+from .candle_callback import Candle
 from .data_saver import DataSaver
 from .ohlcv import OHLCV_candles
 from .proxy_distributor import ProxyDistributor
-from ..utils import in_new_thread
+from ..utils import in_new_thread, write_log
 from ..ta_indicators import *
 
 import time
@@ -23,7 +23,8 @@ class DataAgregator:
          bbands_std=2):
 
         self.client = client
-        self.data_saver = data_saver
+        self.db = data_saver
+        self.proxy_distributor = proxy_distributor
         self.symbols = symbols
         self.rsi_n = rsi_n
         self.bbands_n = bbands_n
@@ -45,6 +46,7 @@ class DataAgregator:
         self.avg_volume_10d_in_btc = dict()
 
         self._timestamp_from_last_quote_assets_rates_calculating = 0
+        self.MIN_CANDLES_LEN = 40
 
 
     def _get_all_pairs_and_quote_assets(self):
@@ -53,7 +55,8 @@ class DataAgregator:
         Вызывается в calc_initial_data_for_all_symbols.'''
         for s in self.client.get_exchange_info()['symbols']:
             self._all_pairs_and_quote_assets[s['symbol']] = s['quoteAsset']
-        self._all_quote_assets = set(self._all_pairs_and_quote_assets.keys())
+        self._all_quote_assets = set(self._all_pairs_and_quote_assets.values())
+        #print(self._all_quote_assets)
         self._all_quote_assets.remove('BTC')
 
 
@@ -67,6 +70,7 @@ class DataAgregator:
             self._timestamp_from_last_quote_assets_rates_calculating = time.time()
             first_time = True
         if (time.time() - self._timestamp_from_last_quote_assets_rates_calculating > 60*15) or first_time:
+            self._timestamp_from_last_quote_assets_rates_calculating = time.time()
             tickers_for_all_symbols = self.client.get_all_tickers()
             for quote_asset in self._all_quote_assets:
                 self._rates_for_all_quote_assets_and_btc[quote_asset] = None
@@ -80,11 +84,9 @@ class DataAgregator:
                         break 
 
 
-
-
-    @in_new_thread
-    def get_initial_candles_for_all_symbols(self):
-         '''Запускать нужно один раз после объявление экземпляра DataAgregator'''
+    #@in_new_thread
+    def create_initial_candles_for_all_symbols(self):
+        '''Запускать нужно один раз после объявление экземпляра DataAgregator'''
         for symbol in self.symbols:
             self.OHLCV_15m[symbol] = OHLCV_candles()
             self.OHLCV_1h[symbol] = OHLCV_candles()
@@ -92,45 +94,50 @@ class DataAgregator:
             self._get_initial_candles_by_symbol(symbol)
             # save to db....
 
-
     @in_new_thread
     def calc_initial_data_for_all_symbols(self):
         '''Создает все индикаторы для всех символов.
         Запускать нужно один раз после объявление экземпляра DataAgregator
-        и после вызова get_initial_candles_for_all_symbols'''
+        и после вызова create_initial_candles_for_all_symbols'''
         self._get_all_pairs_and_quote_assets()
         self._calc_rates_for_all_quote_assets_and_btc()
         for symbol in self.symbols:
-            self.RSI_15m[symbol] = calc_last_RSI(self.OHLCV_15m[symbol].C, self.rsi_n)
-            self.bbands_width_15m[symbol] = calc_last_bbands_width(
-                self.OHLCV_15m[symbol].C, self.bbands_std, self.bbands_n)
-            self.RSI_1h[symbol] = calc_last_RSI(self.OHLCV_1h[symbol].C, self.rsi_n)
-            self.RSI_1h_15m_diff[symbol] = abs(self.RSI_1h[symbol] - self.RSI_15m[symbol])
-            self.RSI_1h_15m_avg[symbol] = (self.RSI_1h[symbol] + self.RSI_15m[symbol])/2
-            self.RSI_1d[symbol] = self.calc_last_RSI(self.OHLCV_1d[symbol].C, self.rsi_n)
-            self.avg_volume_10d_in_btc[symbol] = (
-                sum(self.OHLCV_1d[symbol].volume[-10:])/10
-                *_get_rates_for_quote_asset_and_btc(symbol))
-            # save to db....
+            self._calc_all_indicators_for_symbol_and_interval(symbol, first_time=True)
 
 
-    def _calc_all_indicators_for_symbol_and_interval(self, symbol, interval):
+    def _calc_all_indicators_for_symbol_and_interval(self, symbol, interval=None, first_time=False):
         '''Расчитыват все возможные индикаторы для данного символа и таймфрейма.'''
-        if interval=='15m':
-            self.RSI_15m[symbol] = calc_last_RSI(self.OHLCV_15m[symbol].C, self.rsi_n)
-            self.bbands_width_15m[symbol] = calc_last_bbands_width(
-                self.OHLCV_15m[symbol].C, self.bbands_std, self.bbands_n)
-        if interval=='1h':
-            self.RSI_1h[symbol] = calc_last_RSI(self.OHLCV_1h[symbol].C, self.rsi_n)
-        if interval in ['1h', '15m']:
-            self.RSI_1h_15m_diff[symbol] = abs(self.RSI_1h[symbol] - self.RSI_15m[symbol])
-            self.RSI_1h_15m_avg[symbol] = (self.RSI_1h[symbol] + self.RSI_15m[symbol])/2
-        if interval=='1d':
-            self.RSI_1d[symbol] = self.calc_last_RSI(self.OHLCV_1d[symbol].C, self.rsi_n)
-            self.avg_volume_10d_in_btc[symbol] = (
-                sum(self.OHLCV_1d[symbol].volume[-10:])/10
-                *_get_rates_for_quote_asset_and_btc(symbol))
-        # save to db....
+        if first_time:
+            while True: # Проверка наличия свечек
+                if self.OHLCV_1d[symbol].C and self.OHLCV_1h[symbol].C and self.OHLCV_15m[symbol].C:
+                    break
+                time.sleep(0.1)
+            time.sleep(5)
+
+            if interval=='15m' or first_time:
+                self.RSI_15m[symbol] = calc_last_RSI(self.OHLCV_15m[symbol].C, self.rsi_n)
+                self.bbands_width_15m[symbol] = calc_last_bbands_width(
+                    self.OHLCV_15m[symbol].C, self.bbands_std, self.bbands_n)
+                self.db.update_rsi(symbol, '15m', self.RSI_15m[symbol])
+                self.db.update_bbands_width_15m(symbol, self.bbands_width_15m[symbol])
+
+            if interval=='1h' or first_time:
+                self.RSI_1h[symbol] = calc_last_RSI(self.OHLCV_1h[symbol].C, self.rsi_n)
+                self.db.update_rsi(symbol, '1h', self.RSI_1h[symbol])
+
+            if interval in ['1h', '15m'] or first_time:
+                self.RSI_1h_15m_diff[symbol] = abs(self.RSI_1h[symbol] - self.RSI_15m[symbol])
+                self.RSI_1h_15m_avg[symbol] = (self.RSI_1h[symbol] + self.RSI_15m[symbol])/2
+                self.db.update_rsi_1h_15m_diff(symbol, self.RSI_1h_15m_diff[symbol])
+                self.db.update_rsi_1h_15m_avg(symbol, self.RSI_1h_15m_avg[symbol])
+
+            if interval=='1d' or first_time:
+                self.RSI_1d[symbol] = calc_last_RSI(self.OHLCV_1d[symbol].C, self.rsi_n)
+                self.avg_volume_10d_in_btc[symbol] = (
+                    sum(self.OHLCV_1d[symbol].volume[-10:])/10
+                    *self._get_rates_for_quote_asset_and_btc(symbol))
+                self.db.update_rsi(symbol, '1d', self.RSI_1d[symbol])
+                self.db.update_avg_volume_10d_in_btc(symbol, self.avg_volume_10d_in_btc[symbol])
 
 
     def _get_rates_for_quote_asset_and_btc(self, symbol):
@@ -146,9 +153,16 @@ class DataAgregator:
 
 
     def _get_candles_by_symbol(self, symbol, interval: str, limit: int):
-        r = requests.get( # такая реализация получения свечки работает быстрее, чем методы из библиотек с api binance
-            'https://api.binance.com/api/v1/klines?symbol={}&interval={}&limit={}'.format(symbol, interval, limit)
-            ).text
+        max_attempts = 5
+        for _ in range(max_attempts): # пять попыток. Чтобы была возможность сменить прокси
+            try:
+                r = requests.get( # такая реализация получения свечки работает быстрее, чем методы из библиотек с api binance
+                    'https://api.binance.com/api/v1/klines?symbol={}&interval={}&limit={}'.format(symbol, interval, limit),
+                    proxies=self.proxy_distributor.get_proxy()
+                    ).text
+                break
+            except:
+                continue
         candles = json.loads(r)
         return candles
 
@@ -156,40 +170,48 @@ class DataAgregator:
 
     @in_new_thread
     def _get_initial_candles_by_symbol(self, symbol):
-        candles_1d = self._get_candles_by_symbol(symbol, '1d', 40)[:-1]
-        candles_1h = self._get_candles_by_symbol(symbol, '1h', 40)[:-1]
-        candles_15m = self._get_candles_by_symbol(symbol, '15m', 40)[:-1]
-
-        for c in candles_1d:
-            for ohlcv in [OHLCV_1d, OHLCV_1h, OHLCV_15m]:
-                self.ohlcv[symbol].add_new_OHLCV_candle(
+        candles_1d = self._get_candles_by_symbol(symbol, '1d', self.MIN_CANDLES_LEN)[:-1]
+        candles_1h = self._get_candles_by_symbol(symbol, '1h', self.MIN_CANDLES_LEN)[:-1]
+        candles_15m = self._get_candles_by_symbol(symbol, '15m', self.MIN_CANDLES_LEN)[:-1]
+        #print(candles_1d)
+        tmp_candle_pairs = [
+            (candles_1d, self.OHLCV_1d),
+            (candles_1h, self.OHLCV_1h), 
+            (candles_15m, self.OHLCV_15m)
+            ]
+        for candle_in, candle_out in tmp_candle_pairs:
+            for c in candle_in:
+                candle_out[symbol].add_new_OHLCV_candle(
                     c[1], c[2], c[3], c[4], c[5],
                     delete_first_candle=False)
-        # save to db....
+                if candle_out is self.OHLCV_1d:
+                    interval = '1d'
+                if candle_out is self.OHLCV_1h:
+                    interval = '1h'
+                if candle_out is self.OHLCV_15m:
+                    interval = '15m'
+                self.db.add_ohlcv(Candle(
+                    symbol,
+                    interval,
+                    c[1], c[2], c[3], c[4], c[5],))
 
 
     @in_new_thread
-    def callback_for_candle_receiver(self, callback_data: CandleCallback):
+    def callback_for_candle_receiver(self, callback_data: Candle):
+        '''сallback функция, которая возвращает экземпляр СandlesReceiver.
+        Вызывается, когда получена новая свечка'''
         if callback_data.interval=='15m':
             self._calc_rates_for_all_quote_assets_and_btc()
-            self.OHLCV_15m[callback_data.symbol].add_new_OHLCV_candle(
-                callback_data.O,
-                callback_data.H,
-                callback_data.L,
-                callback_data.C,
-                callback_data.volume,)
+            current_candle = self.OHLCV_1d
         if callback_data.interval=='1h':
-            self.OHLCV_1h[callback_data.symbol].add_new_OHLCV_candle(
-                callback_data.O,
-                callback_data.H,
-                callback_data.L,
-                callback_data.C,
-                callback_data.volume,)
+            current_candle = self.OHLCV_1d
         if callback_data.interval=='1d':
-            self.OHLCV_1d[callback_data.symbol].add_new_OHLCV_candle(
-                callback_data.O,
-                callback_data.H,
-                callback_data.L,
-                callback_data.C,
-                callback_data.volume,)
+            current_candle = self.OHLCV_1d
+        current_candle[callback_data.symbol].add_new_OHLCV_candle(
+            callback_data.O,
+            callback_data.H,
+            callback_data.L,
+            callback_data.C,
+            callback_data.volume,)
+        self.db.add_ohlcv(callback_data)
         self._calc_all_indicators_for_symbol_and_interval(callback_data.symbol, callback_data.interval)

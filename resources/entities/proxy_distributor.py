@@ -4,7 +4,8 @@ import time
 class ProxyDistributor:
 	'''Предоставляет прокси.
 	При каждом новом запросе на получение прокси отдается следующий прокси в списке.
-	Если список закончился - начать отдавать с первого прокси (бесконечная очередь)'''
+	Если список закончился - начать отдавать с первого прокси (бесконечная очередь).
+	Трех прокси должно хватать, для того чтобы избежать бана.'''
 	def __init__(self, proxies: list):
 		self.n = 0
 		self.available = True
@@ -20,6 +21,7 @@ class ProxyDistributor:
 				print(p, e)
 				continue
 			if resp.status_code==200:
+				#print(111, p)
 				print('proxy OK', p['https'] if p else '(without proxy)')
 				self.proxies.append(p)
 

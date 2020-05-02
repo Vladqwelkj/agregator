@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 
+
 def calc_last_RSI(source_prices, n):
     deltas = np.diff(source_prices)
     seed = deltas[:n+1]
