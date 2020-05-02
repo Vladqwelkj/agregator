@@ -28,6 +28,12 @@ class CandlesReceiver:
         self._start_rest_api_1h_1d_candle_receiver()
 
 
+    def delete_symbol(self, symbol):
+        try:
+            self.symbols.remove(symbol)
+        except:
+            pass
+
     def _get_exchange_time(self):
         while True: # exchange_time не сразу определяется в _callback_when_15m_candle_received 
             try: # и нужно ждать, пока она впервые появится

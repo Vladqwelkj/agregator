@@ -24,7 +24,7 @@ if __name__=='__main__':
     client = Client('', '')
     proxy_distributor = ProxyDistributor(PROXIES)
 
-    needed_symbols = [s['symbol'] for s in client.get_exchange_info()['symbols']][790:]
+    needed_symbols = [s['symbol'] for s in client.get_exchange_info()['symbols']][700:]
     print('\nNEEDED SYMBOLS:', needed_symbols)
 
     data_saver = DataSaver(needed_symbols)
