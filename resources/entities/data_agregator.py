@@ -115,10 +115,10 @@ class DataAgregator:
                 if self.OHLCV_1d[symbol].C and self.OHLCV_1h[symbol].C and self.OHLCV_15m[symbol].C:
                     break
                 time.sleep(0.5)
-            time.sleep(5)
-            if len(self.OHLCV_1d[symbol].C)+3 < self.MIN_CANDLES_LEN: # Убираем символы, у которых недостаточно свечей.
+            time.sleep(5) # подождать, чтобы свечки успели добавиться
+            if len(self.OHLCV_1d[symbol].C)+3 < self.MIN_CANDLES_LEN: # Убираем символы, у которых недостаточно свечей(недавно на бирже).
                 self.ignored_symbols.append(symbol)
-                print("Не хватает свечек. Удален", symbol)
+                print("Не хватает свечек(недавно на бирже). Удален", symbol)
                 self.db.delete_symbol(symbol)
                 return
 
