@@ -22,17 +22,16 @@ class CandlesReceiver:
         self.data_agregator_callback = data_agregator_callback
         self.symbols = symbols
 
+        self._callback_15m_is_available = dict()
+        for symbol in symbols:
+            self._callback_15m_is_available[symbol] = True
+
+
 
     def start(self):
         self._start_15m_ws_candle_receiver()
         self._start_rest_api_1h_1d_candle_receiver()
 
-
-    def delete_symbol(self, symbol):
-        try:
-            self.symbols.remove(symbol)
-        except:
-            pass
 
     def _get_exchange_time(self):
         while True: # exchange_time не сразу определяется в _callback_when_15m_candle_received 
@@ -41,7 +40,7 @@ class CandlesReceiver:
                 break
             except AttributeError:
                 time.sleep(1)
-        return datetime.datetime.fromtimestamp(t/1000)
+        return datetime.datetime.utcfromtimestamp(t/1000)
 
 
     @in_new_thread
@@ -52,10 +51,11 @@ class CandlesReceiver:
             try:
                 r = requests.get( # такая реализация получения свечки работает быстрее, чем методы из библиотек с api binance
                     'https://api.binance.com/api/v1/klines?symbol={}&interval={}&limit=2'.format(symbol, interval),
-                    proxies=proxy_distributor.get_proxy()
+                    proxies=self.proxy_distributor.get_proxy()
                     ).text
                 break
-            except:
+            except Exception as e:
+                print('_send_last_candle_by_symbol ERROR:', e)
                 continue
         candle = json.loads(r)[0]
         self.data_agregator_callback(callback_data=Candle(
@@ -95,18 +95,21 @@ class CandlesReceiver:
 
 
     def _callback_when_15m_candle_received(self, data: dict):
-        self.exchange_time = data['data']['e']
+        self.exchange_time = data['data']['E']
         candle = data['data']['k']
         if candle['x']: # Если свеча закрылась
-            self.data_agregator_callback(callback_data=Candle(
-                symbol=candle['s'],
-                interval='15m',
-                O=candle['o'],
-                H=candle['h'],
-                L=candle['l'],
-                C=candle['c'],
-                volume=candle['v'],
-                ))
-
+            if self._callback_15m_is_available[candle['s']]:
+                self._callback_15m_is_available[candle['s']] = False
+                self.data_agregator_callback(callback_data=Candle(
+                    symbol=candle['s'],
+                    interval='15m',
+                    O=candle['o'],
+                    H=candle['h'],
+                    L=candle['l'],
+                    C=candle['c'],
+                    volume=candle['v'],
+                    ))
+                self._callback_15m_is_available[candle['s']] = True
+                  
                 
 

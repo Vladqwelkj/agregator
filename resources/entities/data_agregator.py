@@ -47,13 +47,14 @@ class DataAgregator:
 
         self._timestamp_from_last_base_assets_rates_calculating = 0
         self.ignored_symbols = list()
-        self.MIN_CANDLES_LEN = 40
+        self.MIN_CANDLES_LEN = 25
 
 
     def _get_all_pairs_and_base_assets(self):
         '''Создает словарь с отношением пар и котировочных валют.
         Создает множество всех котировочных активов, кроме BTC.
-        Вызывается в calc_initial_data_for_all_symbols.'''
+        Вызывается в calc_initial_data_for_all_symbols.
+        Нужно для подсчета обьема в BTC.'''
         for s in self.client.get_exchange_info()['symbols']:
             self._all_pairs_and_base_assets[s['symbol']] = s['baseAsset']
         self._all_base_assets = set(self._all_pairs_and_base_assets.values())
@@ -65,7 +66,8 @@ class DataAgregator:
         '''Обновляет курсы базовых(первой в паре) валют к BTC.
         Вызывается в каждом callback`е во время получения 15м свечки
         и при вызове calc_initial_data_for_all_symbols.
-        Должен раз в 15 минут обновлять курс котировочных валют к BTC.'''
+        Должен раз в 15 минут обновлять курс котировочных валют к BTC.
+        Нужно для подсчета обьема в BTC.'''
         first_time = False
         if self._timestamp_from_last_base_assets_rates_calculating==0:
             self._timestamp_from_last_base_assets_rates_calculating = time.time()
@@ -93,6 +95,7 @@ class DataAgregator:
             self.OHLCV_1d[symbol] = OHLCV_candles()
             self._get_initial_candles_by_symbol(symbol)
 
+
     @in_new_thread
     def calc_initial_data_for_all_symbols(self):
         '''Создает все индикаторы для всех символов.
@@ -104,47 +107,48 @@ class DataAgregator:
             self._calc_all_indicators_for_symbol_and_interval(symbol, first_time=True)
 
 
+    @in_new_thread
     def _calc_all_indicators_for_symbol_and_interval(self, symbol, interval=None, first_time=False):
-        '''Расчитыват все возможные индикаторы для данного символа и таймфрейма.'''
+        '''Расчитывает все возможные индикаторы для данного символа и таймфрейма.'''
         if first_time:
             while True: # Проверка наличия свечек
                 if self.OHLCV_1d[symbol].C and self.OHLCV_1h[symbol].C and self.OHLCV_15m[symbol].C:
                     break
-                time.sleep(0.1)
+                time.sleep(0.5)
             time.sleep(5)
             if len(self.OHLCV_1d[symbol].C)+3 < self.MIN_CANDLES_LEN: # Убираем символы, у которых недостаточно свечей.
                 self.ignored_symbols.append(symbol)
-                print(222, symbol)
+                print("Не хватает свечек. Удален", symbol)
                 self.db.delete_symbol(symbol)
                 return
 
-            if interval=='15m' or first_time:
-                self.RSI_15m[symbol] = calc_last_RSI(self.OHLCV_15m[symbol].C, self.rsi_n)
-                self.bbands_width_15m[symbol] = calc_last_bbands_width(
-                    self.OHLCV_15m[symbol].C, self.bbands_std, self.bbands_n)
-                self.db.update_rsi(symbol, '15m', self.RSI_15m[symbol])
-                self.db.update_bbands_width_15m(symbol, self.bbands_width_15m[symbol])
+        if interval=='15m' or first_time:
+            self.RSI_15m[symbol] = calc_last_RSI(self.OHLCV_15m[symbol].C, self.rsi_n)
+            self.bbands_width_15m[symbol] = calc_last_bbands_width(
+                self.OHLCV_15m[symbol].C, self.bbands_std, self.bbands_n)
+            self.db.update_rsi(symbol, '15m', self.RSI_15m[symbol])
+            self.db.update_bbands_width_15m(symbol, self.bbands_width_15m[symbol])
 
-            if interval=='1h' or first_time:
-                self.RSI_1h[symbol] = calc_last_RSI(self.OHLCV_1h[symbol].C, self.rsi_n)
-                self.db.update_rsi(symbol, '1h', self.RSI_1h[symbol])
+        if interval=='1h' or first_time:
+            self.RSI_1h[symbol] = calc_last_RSI(self.OHLCV_1h[symbol].C, self.rsi_n)
+            self.db.update_rsi(symbol, '1h', self.RSI_1h[symbol])
 
-            if interval in ['1h', '15m'] or first_time:
-                self.RSI_1h_15m_diff[symbol] = abs(self.RSI_1h[symbol] - self.RSI_15m[symbol])
-                self.RSI_1h_15m_avg[symbol] = (self.RSI_1h[symbol] + self.RSI_15m[symbol])/2
-                self.db.update_rsi_1h_15m_diff(symbol, self.RSI_1h_15m_diff[symbol])
-                self.db.update_rsi_1h_15m_avg(symbol, self.RSI_1h_15m_avg[symbol])
+        if interval in ['1h', '15m'] or first_time:
+            self.RSI_1h_15m_diff[symbol] = abs(self.RSI_1h[symbol] - self.RSI_15m[symbol])
+            self.RSI_1h_15m_avg[symbol] = (self.RSI_1h[symbol] + self.RSI_15m[symbol])/2
+            self.db.update_rsi_1h_15m_diff(symbol, self.RSI_1h_15m_diff[symbol])
+            self.db.update_rsi_1h_15m_avg(symbol, self.RSI_1h_15m_avg[symbol])
 
-            if interval=='1d' or first_time:
-                self.RSI_1d[symbol] = calc_last_RSI(self.OHLCV_1d[symbol].C, self.rsi_n)
-                self.db.update_rsi(symbol, '1d', self.RSI_1d[symbol])
-                try:
-                    self.avg_volume_10d_in_btc[symbol] = (
-                        sum(self.OHLCV_1d[symbol].volume[-10:])/10
-                        *self._get_rates_for_base_asset_and_btc(symbol))
-                except TypeError: #Значит нельзя найти курс для валюты и btc
-                    return
-                self.db.update_avg_volume_10d_in_btc(symbol, self.avg_volume_10d_in_btc[symbol])
+        if interval=='1d' or first_time:
+            self.RSI_1d[symbol] = calc_last_RSI(self.OHLCV_1d[symbol].C, self.rsi_n)
+            self.db.update_rsi(symbol, '1d', self.RSI_1d[symbol])
+            try:
+                self.avg_volume_10d_in_btc[symbol] = (
+                    sum(self.OHLCV_1d[symbol].volume[-10:])/10
+                    *self._get_rates_for_base_asset_and_btc(symbol))
+            except TypeError: #Значит нельзя найти курс для валюты и btc
+                return
+            self.db.update_avg_volume_10d_in_btc(symbol, self.avg_volume_10d_in_btc[symbol])
 
 
     def _get_rates_for_base_asset_and_btc(self, symbol):
@@ -152,6 +156,8 @@ class DataAgregator:
         Если котировочная валюта - BTC, то возвращается 1.
         Нужно для подсчета объема в BTC'''
         base_asset = self._all_pairs_and_base_assets[symbol]
+        if base_asset=='BTC':
+            return 1
         rate = self._rates_for_all_base_assets_and_btc[base_asset]
         return rate
 
@@ -204,8 +210,8 @@ class DataAgregator:
     def callback_for_candle_receiver(self, callback_data: Candle):
         if callback_data.symbol in self.ignored_symbols:
             return
-        '''сallback функция, которая возвращает экземпляр СandlesReceiver.
-        Вызывается, когда получена новая свечка'''
+        '''сallback функция, которая передается в СandlesReceiver.
+        Вызывается, когда получена новая свечка 15 минутка.'''
         if callback_data.interval=='15m':
             self._update_rates_for_all_base_assets_and_btc()
             current_candle = self.OHLCV_1d

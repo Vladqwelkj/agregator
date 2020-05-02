@@ -11,9 +11,10 @@ RSI_N = 14
 BBANDS_N = 20
 BBANDS_STD = 2
 
-PROXIES = [
-    #{'https':'https://82.119.170.106:8080'},
-    {'https':'socks5://85.10.235.14:1080'},
+'''Число запросов в минуту не превысит 2400. Хватит трех прокси. + один дополнительный.
+    None - работа без прокси. Нужен только https ключ. Пойдет практически любой socks5'''
+PROXIES_FOR_REQUESTS = [
+    #{'https':'socks5://85.10.235.14:1080'},
     {'https':'https://DfxFwZ:WcnJYV@185.221.163.141:9829'},
     {'https':'https://DfxFwZ:WcnJYV@185.221.161.226:9157'},
     None,
@@ -22,9 +23,10 @@ PROXIES = [
 
 if __name__=='__main__':
     client = Client('', '')
-    proxy_distributor = ProxyDistributor(PROXIES)
+    proxy_distributor = ProxyDistributor(PROXIES_FOR_REQUESTS)
 
-    needed_symbols = [s['symbol'] for s in client.get_exchange_info()['symbols']][700:]
+    all_symbols = [s['symbol'] for s in client.get_exchange_info()['symbols']]
+    needed_symbols = all_symbols[750:]
     print('\nNEEDED SYMBOLS:', needed_symbols)
 
     data_saver = DataSaver(needed_symbols)
@@ -39,10 +41,9 @@ if __name__=='__main__':
         )
     data_agregator.create_initial_candles_for_all_symbols()
     data_agregator.calc_initial_data_for_all_symbols()
-    '''
     candles_receiver = CandlesReceiver(
         client=Client,
         proxy_distributor=proxy_distributor,
         symbols=needed_symbols,
         data_agregator_callback=data_agregator.callback_for_candle_receiver)
-    candles_receiver.start()'''
+    candles_receiver.start()
