@@ -10,7 +10,7 @@ from ..utils import in_new_thread, write_log
 from resources.entities.candle_callback import Candle
 from resources.entities.proxy_distributor import ProxyDistributor
 
-
+#написать штуку, которая будет понимать, что пришла свечка
 class CandlesReceiver:
     def __init__(self,
          client: Client, 
@@ -18,10 +18,12 @@ class CandlesReceiver:
          symbols: list,
          data_agregator_callback):
         self.bm = BinanceSocketManager(client)
+        self.client = client
         self.proxy_distributor = proxy_distributor
         self.data_agregator_callback = data_agregator_callback
         self.symbols = symbols
 
+        self.is_available_rest_api_candles_sender = True
         self._callback_15m_is_available = dict()
         for symbol in symbols:
             self._callback_15m_is_available[symbol] = True
@@ -29,18 +31,24 @@ class CandlesReceiver:
 
 
     def start(self):
-        self._start_15m_ws_candle_receiver()
-        self._start_rest_api_1h_1d_candle_receiver()
+        self._start_sender_candles_by_rest_api()
 
 
     def _get_exchange_time(self):
-        while True: # exchange_time не сразу определяется в _callback_when_15m_candle_received 
-            try: # и нужно ждать, пока она впервые появится
-                t = int(self.exchange_time)
+        max_attempts = 5
+        for _ in range(max_attempts): # пять попыток. Чтобы была возможность сменить прокси
+            try:
+                r = requests.get(
+                    'https://api.binance.com/api/v3/time',
+                    proxies=self.proxy_distributor.get_proxy()
+                    ).text
                 break
-            except AttributeError:
-                time.sleep(1)
-        return datetime.datetime.utcfromtimestamp(t/1000)
+            except Exception as e:
+                print('_send_last_candle_by_symbol ERROR:', e)
+                continue
+        t = json.loads(r)['serverTime']/1000
+        return datetime.datetime.utcfromtimestamp(t-10)
+        
 
 
     @in_new_thread
@@ -70,46 +78,30 @@ class CandlesReceiver:
 
 
     @in_new_thread
-    def _start_rest_api_1h_1d_candle_receiver(self):
+    def _start_sender_candles_by_rest_api(self):
         while True:
             time_now = self._get_exchange_time()
             print(time_now)
+            if time_now.minute%15==0: #if new 15m
+                for symbol in self.symbols:
+                    self._send_last_candle_by_symbol(symbol, '15m')
             if time_now.minute==00: # if new hour
                 for symbol in self.symbols:
                     self._send_last_candle_by_symbol(symbol, '1h')
                 if time_now.hour==00: # if new day
                     for symbol in self.symbols:
                         self._send_last_candle_by_symbol(symbol, '1d')
-                time.sleep(3000) # timeout. about 1 hour
-            time.sleep(1)
+            if time_now.minute==00 or time_now.minute%15==0:
+                time.sleep(100) 
+            time.sleep(0.5)
 
-
-    def _start_15m_ws_candle_receiver(self):
-        streams_names = list()
-        for symbol in self.symbols:
-            streams_names.append(symbol.lower()+'@kline_15m')
-        self.bm.start_multiplex_socket(streams_names, self._callback_when_15m_candle_received)
+'''
+    def _start_ws_time_updater(self):
+        self.bm.start_multiplex_socket(['!miniTicker@arr'], self._callback_for_time_updating)
         self.bm.start()
 
 
-
-
-    def _callback_when_15m_candle_received(self, data: dict):
-        self.exchange_time = data['data']['E']
-        candle = data['data']['k']
-        if candle['x']: # Если свеча закрылась
-            if self._callback_15m_is_available[candle['s']]:
-                self._callback_15m_is_available[candle['s']] = False
-                self.data_agregator_callback(callback_data=Candle(
-                    symbol=candle['s'],
-                    interval='15m',
-                    O=candle['o'],
-                    H=candle['h'],
-                    L=candle['l'],
-                    C=candle['c'],
-                    volume=candle['v'],
-                    ))
-                self._callback_15m_is_available[candle['s']] = True
-                  
-                
-
+    def _callback_for_time_updating(self, data: dict):
+        #print(data['data'][-1])
+        self.exchange_time = data['data'][-1]['E']
+'''

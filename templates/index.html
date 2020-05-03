@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>data</title>
+</head>
+<body>
+	<h3>{{symbols_amount}} Symbols</h3>
+	<hr>
+	<ul>
+		{% for symbol in symbols %}
+		<li><a href="ohlcv_15m/{{symbol}}">ohlcv_15m {{symbol}}</a></li>
+		<li><a href="ohlcv_1h/{{symbol}}">ohlcv_1h {{symbol}}</a></li>
+		<li><a href="ohlcv_1d/{{symbol}}">ohlcv_1d {{symbol}}</a></li>
+
+		<li><a href="rsi_15m/{{symbol}}">rsi_15m {{symbol}}</a></li>
+		<li><a href="rsi_1h/{{symbol}}">rsi_1h {{symbol}}</a></li>
+		<li><a href="rsi_1d/{{symbol}}">rsi_1d {{symbol}}</a></li>
+
+		<li><a href="rsi_1h_15m_diff/{{symbol}}">rsi_1h_15m_diff {{symbol}}</a></li>
+		<li><a href="rsi_1h_15m_avg/{{symbol}}">rsi_1h_15m_avg {{symbol}}</a></li>
+
+		<li><a href="bbands_width_15m/{{symbol}}">bbands_width_15m {{symbol}}</a></li>
+		<li><a href="avg_volume_10d_in_btc/{{symbol}}">avg_volume_10d_in_btc {{symbol}}</a></li>
+
+
+		<hr>
+		{% endfor %}
+	</ul>
+</body>
+</html>

@@ -213,11 +213,11 @@ class DataAgregator:
         '''сallback функция, которая передается в СandlesReceiver.
         Вызывается, когда получена новая свечка 15 минутка.'''
         if callback_data.interval=='15m':
-            self._update_rates_for_all_base_assets_and_btc()
             current_candle = self.OHLCV_1d
         if callback_data.interval=='1h':
             current_candle = self.OHLCV_1d
         if callback_data.interval=='1d':
+            self._update_rates_for_all_base_assets_and_btc()
             current_candle = self.OHLCV_1d
         current_candle[callback_data.symbol].add_new_OHLCV_candle(
             callback_data.O,
