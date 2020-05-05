@@ -7,6 +7,7 @@ from resources.entities.proxy_distributor import ProxyDistributor
 from resources.utils import write_log
 
 import time
+import datetime
 
 RSI_N = 14
 BBANDS_N = 20
@@ -15,8 +16,6 @@ BBANDS_STD = 2
 '''Число запросов в минуту не превысит 2400. Хватит трех прокси. + один дополнительный.
     None - работа без прокси. Нужен только https ключ. Пойдет практически любой socks5'''
 PROXIES_FOR_REQUESTS = [
-    {'https':'socks5://85.10.235.14:1080'},
-    {'https':'socks5://148.251.234.93:1080'},
     {'https':'https://DfxFwZ:WcnJYV@185.221.163.141:9829'},
     {'https':'https://DfxFwZ:WcnJYV@185.221.161.226:9157'},
     None,
@@ -24,11 +23,14 @@ PROXIES_FOR_REQUESTS = [
 
 
 if __name__=='__main__':
+    if datetime.datetime.now().minute%15==0:
+        time.sleep(100) # чтобы избежать коллизий со свечками
     client = Client('', '')
     proxy_distributor = ProxyDistributor(PROXIES_FOR_REQUESTS)
 
     all_symbols = [s['symbol'] for s in client.get_exchange_info()['symbols']]
-    needed_symbols = all_symbols
+    needed_symbols = all_symbols[0:600]
+    needed_symbols.sort()
     print('\nNEEDED SYMBOLS:', needed_symbols)
 
     data_saver = DataSaver(needed_symbols)
@@ -47,6 +49,7 @@ if __name__=='__main__':
         client=Client,
         proxy_distributor=proxy_distributor,
         symbols=needed_symbols,
+        data_agregator_obj=data_agregator,
         data_agregator_callback=data_agregator.callback_for_candle_receiver)
     candles_receiver.start()
 

@@ -1,4 +1,5 @@
 from .candle_callback import Candle
+from .candles_receiver import CandlesReceiver
 from .data_saver import DataSaver
 from .ohlcv import OHLCV_candles
 from .proxy_distributor import ProxyDistributor
@@ -20,7 +21,8 @@ class DataAgregator:
          symbols: list,
          rsi_n=14,
          bbands_n=20,
-         bbands_std=2):
+         bbands_std=2,
+         filter_by_btc_1d_volume=0.4):
 
         self.client = client
         self.db = data_saver
@@ -29,6 +31,7 @@ class DataAgregator:
         self.rsi_n = rsi_n
         self.bbands_n = bbands_n
         self.bbands_std = bbands_std
+        self.filter_by_btc_1d_volume = filter_by_btc_1d_volume
 
         self._all_pairs_and_base_assets = dict()
         self._rates_for_all_base_assets_and_btc = dict()
@@ -45,9 +48,11 @@ class DataAgregator:
         self.bbands_width_15m = dict()
         self.avg_volume_10d_in_btc = dict()
 
+        self.candles_receiver_obj = None
+
         self._timestamp_from_last_base_assets_rates_calculating = 0
         self.ignored_symbols = list()
-        self.MIN_CANDLES_LEN = 25
+        self.MIN_CANDLES_LEN = 100
 
 
     def _get_all_pairs_and_base_assets(self):
@@ -87,6 +92,15 @@ class DataAgregator:
                         break 
 
 
+    def stop_symbol_tracking(self, symbol):
+        self.ignored_symbols.append(symbol)
+        self.db.delete_symbol(symbol)
+        try:
+            self.candles_receiver_obj.stop_symbol_tracking(symbol)
+        except:
+            pass
+
+
     def create_initial_candles_for_all_symbols(self):
         '''Запускать нужно один раз после объявление экземпляра DataAgregator'''
         for symbol in self.symbols:
@@ -117,9 +131,8 @@ class DataAgregator:
                 time.sleep(0.5)
             time.sleep(5) # подождать, чтобы свечки успели добавиться
             if len(self.OHLCV_1d[symbol].C)+3 < self.MIN_CANDLES_LEN: # Убираем символы, у которых недостаточно свечей(недавно на бирже).
-                self.ignored_symbols.append(symbol)
+                self.stop_symbol_tracking(symbol)
                 print("Не хватает свечек(недавно на бирже). Удален", symbol)
-                self.db.delete_symbol(symbol)
                 return
 
         if interval=='15m' or first_time:
@@ -150,6 +163,10 @@ class DataAgregator:
                 return
             self.db.update_avg_volume_10d_in_btc(symbol, self.avg_volume_10d_in_btc[symbol])
 
+        if first_time and self.avg_volume_10d_in_btc[symbol] < self.filter_by_btc_1d_volume:
+            self.stop_symbol_tracking(symbol)
+            print('Удален из-за фильтра по объему', symbol)
+
 
     def _get_rates_for_base_asset_and_btc(self, symbol):
         '''Узнает курс котировочной валюты к BTC.
@@ -175,7 +192,6 @@ class DataAgregator:
                 continue
         candles = json.loads(r)
         return candles
-
 
 
     @in_new_thread
@@ -206,24 +222,31 @@ class DataAgregator:
                     c[1], c[2], c[3], c[4], c[5],))
 
 
+    def _update_candles(self, callback_data: Candle):
+        params = {
+            'O': callback_data.O, 
+            'H': callback_data.H,
+            'L': callback_data.L,
+            'C': callback_data.C,
+            'volume': callback_data.volume,
+            }
+        if callback_data.interval=='15m':
+            self.OHLCV_15m[callback_data.symbol].add_new_OHLCV_candle(**params)
+        if callback_data.interval=='1h':
+            self.OHLCV_1h[callback_data.symbol].add_new_OHLCV_candle(**params)
+        if callback_data.interval=='1d':
+            self.OHLCV_1d[callback_data.symbol].add_new_OHLCV_candle(**params)
+
+
     @in_new_thread
     def callback_for_candle_receiver(self, callback_data: Candle):
-        if callback_data.symbol in self.ignored_symbols:
-            return
         '''сallback функция, которая передается в СandlesReceiver.
         Вызывается, когда получена новая свечка 15 минутка.'''
-        if callback_data.interval=='15m':
-            current_candle = self.OHLCV_1d
-        if callback_data.interval=='1h':
-            current_candle = self.OHLCV_1d
+        if callback_data.symbol in self.ignored_symbols:
+            return
         if callback_data.interval=='1d':
             self._update_rates_for_all_base_assets_and_btc()
-            current_candle = self.OHLCV_1d
-        current_candle[callback_data.symbol].add_new_OHLCV_candle(
-            callback_data.O,
-            callback_data.H,
-            callback_data.L,
-            callback_data.C,
-            callback_data.volume,)
+        self._update_candles(callback_data)
         self.db.add_ohlcv(callback_data)
+        #print(current_candle[callback_data.symbol].C)
         self._calc_all_indicators_for_symbol_and_interval(callback_data.symbol, callback_data.interval)

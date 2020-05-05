@@ -18,7 +18,10 @@ class DataSaver:
 
 
     def delete_symbol(self, symbol):
-        shutil.rmtree(self.main_path+'/'+symbol+'/')
+        try:
+            shutil.rmtree(self.main_path+'/'+symbol+'/')
+        except:
+            pass
 
 
     def _delete_main_folder(self):
@@ -26,6 +29,7 @@ class DataSaver:
             shutil.rmtree(self.main_path+'/')
         except FileNotFoundError:
             pass
+
 
     def _generate_folders(self):
         os.mkdir(self.main_path)
