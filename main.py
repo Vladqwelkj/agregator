@@ -16,10 +16,13 @@ BBANDS_STD = 2
 '''Число запросов в минуту не превысит 2400. Хватит трех прокси. + один дополнительный.
     None - работа без прокси. Нужен только https ключ. Пойдет практически любой socks5'''
 PROXIES_FOR_REQUESTS = [
+{'https':'https://8f14GB:szmSDZ@193.31.101.227:9666'},
+{'https':'https://8f14GB:szmSDZ@193.31.101.197:9404'},
     {'https':'https://DfxFwZ:WcnJYV@185.221.163.141:9829'},
     {'https':'https://DfxFwZ:WcnJYV@185.221.161.226:9157'},
     None,
     ]
+
 
 
 if __name__=='__main__':
@@ -28,8 +31,8 @@ if __name__=='__main__':
     client = Client('', '')
     proxy_distributor = ProxyDistributor(PROXIES_FOR_REQUESTS)
 
-    all_symbols = [s['symbol'] for s in client.get_exchange_info()['symbols']]
-    needed_symbols = all_symbols[0:600]
+    all_symbols = [s['symbol'] for s in client.get_exchange_info()['symbols']  if s['status']=='TRADING']
+    needed_symbols = all_symbols[0:]
     needed_symbols.sort()
     print('\nNEEDED SYMBOLS:', needed_symbols)
 

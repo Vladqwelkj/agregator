@@ -52,50 +52,91 @@ class CandlesReceiver:
         return datetime.datetime.utcfromtimestamp(t)
         
 
+
+    def _convert_15m_candles(self, symbol, candles_15m: list, new_interval: str):
+        if new_interval=='1d':
+            coef_15m = 96 # 24*60 / 15
+        if new_interval=='1h': 
+            coef_15m = 4  # 60 / 15
+
+        to_convert = candles_15m[-coef_15m:]
+        volume = 0
+        open_ = float(to_convert[0][1])
+        close_ = float(to_convert[-1][4])
+        low, high = list(), list()
+        for candle in to_convert:
+            low.append(float(candle[3]))
+            high.append(float(candle[2]))
+            volume += float(candle[5])
+        return Candle(
+            symbol=symbol,
+            interval=new_interval,
+            O=open_,
+            H=max(high),
+            L=min(low),
+            C=close_,
+            volume=volume,
+            )
+
+
+
     @in_new_thread
-    def _send_last_candle_by_symbol(self, symbol: str, interval: str):
+    def _send_last_candles_by_symbol(self, symbol: str, interval_1d: bool, interval_1h: bool, interval_15m=True, recursion_level=0):
         '''Отправляет в data_agregator последнюю свечку'''
+        if recursion_level > 2: # если уже полминуты нельзя получить новую свечку, значит новой свечки нет (мертвые торги)
+            return
+        limit = 2
+        if interval_1h:
+            limit = 5
+        if interval_1d:
+            limit = 97
+
         max_attempts = 5
         for _ in range(max_attempts): # пять попыток. Чтобы была возможность сменить прокси
             try:
                 r = requests.get( # такая реализация получения свечки работает быстрее, чем методы из библиотек с api binance
-                    'https://api.binance.com/api/v1/klines?symbol={}&interval={}&limit=2'.format(symbol, interval),
+                    'https://api.binance.com/api/v1/klines?symbol={}&interval=15m&limit={}'.format(symbol, limit),
                     proxies=self.proxy_distributor.get_proxy()
                     ).text
+                received_closed_candles = json.loads(r)[:-1]
                 break
             except Exception as e:
-                print('_send_last_candle_by_symbol ERROR:', e)
+                print('_send_last_candles_by_symbol ERROR:', e)
                 time.sleep(1)
                 continue
-        candle = json.loads(r)[0]
-        candle = Candle(
+        last_closed_15m_candle = received_closed_candles[-1]
+        last_closed_15m_candle = Candle(
             symbol=symbol,
-            interval=interval,
-            O=candle[1],
-            H=candle[2],
-            L=candle[3],
-            C=candle[4],
-            volume=candle[5],
+            interval='15m',
+            O=last_closed_15m_candle[1],
+            H=last_closed_15m_candle[2],
+            L=last_closed_15m_candle[3],
+            C=last_closed_15m_candle[4],
+            volume=last_closed_15m_candle[5],
             )
-        if self._check_equality_of_last_data_agregator_candle_and_new_candle(new_candle=candle):
+        if self._check_equality_of_last_data_agregator_candle_and_new_candle(new_candle=last_closed_15m_candle): # Если получили устаревшую свечку
             time.sleep(10)
-            self._send_last_candle_by_symbol(symbol, interval)
+            self._send_last_candles_by_symbol(symbol, interval_1d, interval_1h, recursion_level=recursion_level+1)
             return
-        self.data_agregator_callback(callback_data=candle)
+
+        self.data_agregator_callback(callback_data=last_closed_15m_candle)
+        if interval_1h:
+            last_closed_1h_candle = self._convert_15m_candles(symbol, received_closed_candles, '1h')
+            self.data_agregator_callback(callback_data=last_closed_1h_candle)
+        if interval_1d:
+            last_closed_1d_candle = self._convert_15m_candles(symbol, received_closed_candles, '1d')
+            self.data_agregator_callback(callback_data=last_closed_1d_candle)
+        
 
 
     def _check_equality_of_last_data_agregator_candle_and_new_candle(self, new_candle: Candle):
-        if new_candle.interval=='15m':
-            to_compare = self.data_agregator_obj.OHLCV_15m[new_candle.symbol]
-        if new_candle.interval=='1h':
-            to_compare = self.data_agregator_obj.OHLCV_1h[new_candle.symbol]
-        if new_candle.interval=='1d':
-            to_compare = self.data_agregator_obj.OHLCV_1d[new_candle.symbol]
-        if (to_compare.O[-1]==new_candle.O
-             and to_compare.H[-1]==new_candle.H
-             and to_compare.L[-1]==new_candle.L 
-             and to_compare.C[-1]==new_candle.C
-             and to_compare.volume[-1]==new_candle.volume):
+        '''Проверяет, является ли переданная новая свечка равной последней свечке.'''
+        old_candels = self.data_agregator_obj.OHLCV_15m[new_candle.symbol]
+        if (old_candels.O[-1]==new_candle.O
+             and old_candels.H[-1]==new_candle.H
+             and old_candels.L[-1]==new_candle.L 
+             and old_candels.C[-1]==new_candle.C
+             and old_candels.volume[-1]==new_candle.volume):
             return True
 
 
@@ -104,17 +145,15 @@ class CandlesReceiver:
         while True:
             time_now = self._get_exchange_time()
             print(time_now)
-            if time_now.minute==00 or time_now.minute%15==0:
+            if time_now.minute%15==0:
+                interval_1h = False
+                interval_1d = False
                 time.sleep(9) 
-            if time_now.minute%15==0: #if new 15m
+                if time_now.minute==00: # if new hour
+                    interval_1h = True
+                    if time_now.hour==00: # if new day
+                        interval_1d = True
                 for symbol in self.symbols:
-                    self._send_last_candle_by_symbol(symbol, '15m')
-            if time_now.minute==00: # if new hour
-                for symbol in self.symbols:
-                    self._send_last_candle_by_symbol(symbol, '1h')
-                if time_now.hour==00: # if new day
-                    for symbol in self.symbols:
-                        self._send_last_candle_by_symbol(symbol, '1d')
-            if time_now.minute==00 or time_now.minute%15==0:
-                time.sleep(100) 
+                    self._send_last_candles_by_symbol(symbol, interval_1d, interval_1h)
+                time.sleep(800) # чтобы второй раз свечка не отправилась
             time.sleep(1.5)

@@ -124,6 +124,8 @@ class DataAgregator:
     @in_new_thread
     def _calc_all_indicators_for_symbol_and_interval(self, symbol, interval=None, first_time=False):
         '''Расчитывает все возможные индикаторы для данного символа и таймфрейма.'''
+        if symbol in self.ignored_symbols:
+            return
         if first_time:
             while True: # Проверка наличия свечек
                 if self.OHLCV_1d[symbol].C and self.OHLCV_1h[symbol].C and self.OHLCV_15m[symbol].C:

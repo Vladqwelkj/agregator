@@ -3,7 +3,6 @@ import pandas
 
 
 def calc_last_RSI(source_prices, n):
-    print(source_prices)
     #source_prices = source_prices.reverse()
     src = pandas.Series(source_prices)
     # Get the difference in price from previous step
